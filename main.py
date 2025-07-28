@@ -1,40 +1,40 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from fastapi import FastAPI, File, UploadFile, HTTPException
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 import os
 
-# Create FastAPI app
-app = FastAPI(title="Face Compare Service")
+app = FastAPI(title="Face Compare Service (Direct Upload)")
 
-# Initialize boto3 client (region from ENV)
+# Initialize Rekognition client
 rekognition = boto3.client(
     "rekognition",
     region_name=os.getenv("AWS_REGION", "us-east-1")
 )
 
-class CompareRequest(BaseModel):
-    source_bucket: str
-    source_key: str
-    target_bucket: str
-    target_key: str
-    similarity_threshold: float = 90.0
-
 @app.post("/compare_faces")
-def compare_faces(req: CompareRequest):
+async def compare_faces(
+    source_image: UploadFile = File(...),
+    target_image: UploadFile = File(...),
+    similarity_threshold: float = 90.0
+):
     try:
+        # Read uploaded files into memory
+        source_bytes = await source_image.read()
+        target_bytes = await target_image.read()
+
         response = rekognition.compare_faces(
-            SourceImage={'S3Object': {'Bucket': req.source_bucket, 'Name': req.source_key}},
-            TargetImage={'S3Object': {'Bucket': req.target_bucket, 'Name': req.target_key}},
-            SimilarityThreshold=req.similarity_threshold
+            SourceImage={'Bytes': source_bytes},
+            TargetImage={'Bytes': target_bytes},
+            SimilarityThreshold=similarity_threshold
         )
-        # Return only key information
+
         return {
             "matches": [
                 {
                     "similarity": m["Similarity"],
                     "bounding_box": m["Face"]["BoundingBox"]
-                } for m in response.get("FaceMatches", [])
+                }
+                for m in response.get("FaceMatches", [])
             ],
             "unmatched_faces": len(response.get("UnmatchedFaces", []))
         }
